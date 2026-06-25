@@ -1,0 +1,21 @@
+[package]
+name = "chem_3d_builder_rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# 2D structure editor widget (egui)
+chembuider-rs = { path = "../chembuider-rs" }
+# 3D molecule viewer (egui + wgpu offscreen)
+moleucle_3dview_rs = { path = "../moleucle_3dview_rs" }
+# Molecular-mechanics force fields + minimizers (zero deps)
+zunda_rs = { path = "../zunda_rs" }
+
+# GUI / rendering. Must match the egui version used by the two sub-crates (0.34.x).
+# wgpu renderer is required: InteractiveMoleculeViewport::show() needs egui_wgpu::RenderState.
+eframe = { version = "0.34", default-features = false, features = ["default_fonts", "wgpu"] }
+egui = "0.34"
+egui-wgpu = "0.34"
+
+# Same linear-algebra crate moleucle_3dview_rs uses, so Vec3 types match exactly.
+lin_alg = { version = "1.4.2", features = ["computer_graphics"] }
