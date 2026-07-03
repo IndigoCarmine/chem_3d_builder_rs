@@ -1,21 +1,22 @@
 [package]
 name = "chem_3d_builder_rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 # 2D structure editor widget (egui)
-chembuider-rs = { path = "../chembuider-rs" }
-# 3D molecule viewer (egui + wgpu offscreen)
-moleucle_3dview_rs = { path = "../moleucle_3dview_rs" }
+chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", version = "0.4.0" }
+# 3D molecule viewer (egui + wgpu offscreen). Pinned to the egui-0.35 migration
+# commit so its egui version matches chembuider-rs and eframe below.
+moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs", rev = "870b09267a635cc918232e989281d2320fafe722" }
 # Molecular-mechanics force fields + minimizers (zero deps)
-zunda_rs = { path = "../zunda_rs" }
+zunda_rs = { git = "https://github.com/IndigoCarmine/zunda_rs", version = "0.3.1" }
 
-# GUI / rendering. Must match the egui version used by the two sub-crates (0.34.x).
+# GUI / rendering. Must match the egui version used by the two sub-crates (0.35.x).
 # wgpu renderer is required: InteractiveMoleculeViewport::show() needs egui_wgpu::RenderState.
-eframe = { version = "0.34", default-features = false, features = ["default_fonts", "wgpu"] }
-egui = "0.34"
-egui-wgpu = "0.34"
+eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "wgpu"] }
+egui = "0.35.0"
+egui-wgpu = "0.35.0"
 
 # Same linear-algebra crate moleucle_3dview_rs uses, so Vec3 types match exactly.
 lin_alg = { version = "1.4.2", features = ["computer_graphics"] }

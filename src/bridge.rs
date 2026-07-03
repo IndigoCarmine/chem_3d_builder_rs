@@ -222,7 +222,7 @@ pub fn to_viewer_molecule(
     positions: &[zunda_rs::molecule::Vec3],
 ) -> moleucle_3dview_rs::Molecule {
     use lin_alg::f32::Vec3 as FVec3;
-    use moleucle_3dview_rs::molecule::{Atom, Bond};
+    use moleucle_3dview_rs::molecule::{Atom, Bond, Element};
 
     const ANGSTROM_TO_NM: f32 = 0.1;
 
@@ -236,15 +236,9 @@ pub fn to_viewer_molecule(
                 positions[i].y as f32 * ANGSTROM_TO_NM,
                 positions[i].z as f32 * ANGSTROM_TO_NM,
             ),
-            element: el.to_uppercase(),
+            element: Element::new(&el.to_uppercase()),
             id: i,
-            name: None,
-            res_name: None,
-            chain_id: None,
-            res_seq: None,
-            occupancy: None,
-            temp_factor: None,
-            charge: None,
+            meta: None,
         })
         .collect();
 
@@ -258,7 +252,10 @@ pub fn to_viewer_molecule(
         })
         .collect();
 
-    moleucle_3dview_rs::Molecule { atoms, bonds }
+    let mut result = moleucle_3dview_rs::Molecule::default();
+    result.atoms = atoms;
+    result.bonds = bonds;
+    result
 }
 
 #[cfg(test)]

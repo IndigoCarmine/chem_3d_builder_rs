@@ -31,8 +31,9 @@ impl MmSession {
             return Err("構造が空です。まず左側で原子を描いてください。".to_string());
         }
         let mm = bridge::build_mm_molecule(&mol, &mol.positions);
+        let topo = zunda_rs::Topology::from_molecule(&mm);
         let mut ff = ff_kind.make();
-        ff.setup(&mm)
+        ff.setup(&mm, &topo)
             .map_err(|e| format!("力場のセットアップに失敗しました: {e}"))?;
         let positions = mm.atom_positions();
         let energy = ff
@@ -51,6 +52,15 @@ impl MmSession {
 
     pub fn atom_count(&self) -> usize {
         self.mol.elements.len()
+    }
+
+    /// Current positions as `[f32; 3]` arrays in Ångström, ready for
+    /// `InteractiveMoleculeViewport::update_positions_angstrom`.
+    pub fn positions_angstrom(&self) -> Vec<[f32; 3]> {
+        self.positions
+            .iter()
+            .map(|p| [p.x as f32, p.y as f32, p.z as f32])
+            .collect()
     }
 
     /// Run up to `max_steps` steepest-descent iterations (with a backtracking line

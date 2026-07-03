@@ -33,6 +33,8 @@ struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        Self::setup_fonts(&cc.egui_ctx);
+
         let mut editor = ChemStructEditor::default();
         // Use built-in defaults so the app never touches the user's config files.
         editor.config = Config::embedded();
@@ -46,6 +48,67 @@ impl App {
             status: "左で構造を描き、「→ 3D 生成」で立体化、「MM最小化」で構造緩和します。"
                 .to_string(),
         }
+    }
+
+    /// Load a system Japanese font into egui (default fonts lack CJK glyphs).
+    /// Mirrors the approach in the sibling `Shiratama-rs` repo.
+    fn setup_fonts(ctx: &egui::Context) {
+        let mut fonts = egui::FontDefinitions::default();
+        let mut loaded = false;
+
+        #[cfg(target_os = "windows")]
+        for path in [
+            "C:\\Windows\\Fonts\\YuGothM.ttc",
+            "C:\\Windows\\Fonts\\meiryo.ttc",
+            "C:\\Windows\\Fonts\\msgothic.ttc",
+        ] {
+            if let Ok(bytes) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "japanese".to_owned(),
+                    std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+                );
+                loaded = true;
+                break;
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        if let Ok(bytes) = std::fs::read("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc") {
+            fonts.font_data.insert(
+                "japanese".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
+            loaded = true;
+        }
+
+        #[cfg(target_os = "linux")]
+        for path in [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        ] {
+            if let Ok(bytes) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "japanese".to_owned(),
+                    std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+                );
+                loaded = true;
+                break;
+            }
+        }
+
+        if loaded {
+            // Append as a fallback so Latin keeps the default font and CJK glyphs
+            // resolve through the Japanese font.
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts
+                    .families
+                    .entry(family)
+                    .or_default()
+                    .push("japanese".to_owned());
+            }
+        }
+
+        ctx.set_fonts(fonts);
     }
 
     /// Convert the current 2D structure into an initial 3D structure and set up MM.
@@ -70,14 +133,14 @@ impl App {
     /// Advance the live minimization by one frame, if running.
     fn advance_mm(&mut self, ctx: &egui::Context) {
         let spf = self.steps_per_frame;
-        let mut new_mol = None;
+        let mut new_coords: Option<Vec<[f32; 3]>> = None;
         let mut finished_status = None;
         let mut repaint = false;
 
         if let Some(mm) = self.mm.as_mut() {
             if mm.minimizing {
                 mm.step(spf);
-                new_mol = Some(mm.viewer_molecule());
+                new_coords = Some(mm.positions_angstrom());
                 if mm.minimizing {
                     repaint = true;
                 } else {
@@ -91,8 +154,8 @@ impl App {
             }
         }
 
-        if let Some(mol) = new_mol {
-            self.viewport.set_molecule(mol);
+        if let Some(coords) = new_coords {
+            let _ = self.viewport.update_positions_angstrom(&coords);
         }
         if let Some(s) = finished_status {
             self.status = s;
@@ -233,11 +296,11 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.advance_mm(&ctx);
 
-        egui::Panel::top("toolbar").show_inside(ui, |ui| {
+        egui::Panel::top("toolbar").show(ui, |ui| {
             self.toolbar(ui);
         });
 
-        egui::Panel::bottom("status").show_inside(ui, |ui| {
+        egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(format!(
                     "原子: {}  結合: {}  |  {}",
@@ -251,12 +314,12 @@ impl eframe::App for App {
         egui::Panel::left("editor_2d")
             .resizable(true)
             .default_size(560.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.heading("2D 構造エディタ");
                 let _ = self.editor.ui(ui);
             });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("3D ビュー + MM");
             match &self.render_state {
                 Some(rs) => {
