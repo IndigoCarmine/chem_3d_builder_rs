@@ -11,15 +11,15 @@
 mod bridge;
 mod forcefield_kind;
 mod mm_session;
+mod theme;
 
-use chembuider_rs::{BondOrder, ChemStructEditor, Config, Tool};
+use chembuider_rs::{ChemStructEditor, Config};
 use eframe::egui;
+use egui::RichText;
 use forcefield_kind::FfKind;
 use mm_session::MmSession;
 use moleucle_3dview_rs::{InteractiveMoleculeViewport, RenderStyle};
-
-/// Elements offered as quick-pick buttons in the 2D toolbar.
-const ELEMENTS: [&str; 9] = ["C", "N", "O", "H", "F", "Cl", "Br", "S", "P"];
+use theme::PAL;
 
 struct App {
     editor: ChemStructEditor,
@@ -28,12 +28,16 @@ struct App {
     ff_kind: FfKind,
     mm: Option<MmSession>,
     steps_per_frame: usize,
-    status: String,
+    /// Last conversion error, surfaced in the energy badge (the refined design
+    /// has no status bar — drawing tools and errors go through the widget's
+    /// keyboard shortcuts / the badge instead).
+    error: Option<String>,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
+        theme::install(&cc.egui_ctx);
 
         let mut editor = ChemStructEditor::default();
         // Use built-in defaults so the app never touches the user's config files.
@@ -45,8 +49,7 @@ impl App {
             ff_kind: FfKind::default(),
             mm: None,
             steps_per_frame: 8,
-            status: "左で構造を描き、「→ 3D 生成」で立体化、「MM最小化」で構造緩和します。"
-                .to_string(),
+            error: None,
         }
     }
 
@@ -118,15 +121,10 @@ impl App {
             Ok(session) => {
                 self.viewport.set_molecule(session.viewer_molecule());
                 self.viewport.focus_on_molecule_center();
-                self.status = format!(
-                    "3D構造を生成しました（{} 原子, 水素付加済み, {}）。E = {:.3} kJ/mol",
-                    session.atom_count(),
-                    self.ff_kind.label(),
-                    session.energy,
-                );
+                self.error = None;
                 self.mm = Some(session);
             }
-            Err(e) => self.status = e,
+            Err(e) => self.error = Some(e),
         }
     }
 
@@ -134,7 +132,6 @@ impl App {
     fn advance_mm(&mut self, ctx: &egui::Context) {
         let spf = self.steps_per_frame;
         let mut new_coords: Option<Vec<[f32; 3]>> = None;
-        let mut finished_status = None;
         let mut repaint = false;
 
         if let Some(mm) = self.mm.as_mut() {
@@ -143,13 +140,6 @@ impl App {
                 new_coords = Some(mm.positions_angstrom());
                 if mm.minimizing {
                     repaint = true;
-                } else {
-                    finished_status = Some(format!(
-                        "MM最小化終了: {} ステップ, E = {:.3} kJ/mol {}",
-                        mm.total_steps,
-                        mm.energy,
-                        if mm.converged { "（収束）" } else { "（停止）" },
-                    ));
                 }
             }
         }
@@ -157,88 +147,41 @@ impl App {
         if let Some(coords) = new_coords {
             let _ = self.viewport.update_positions_angstrom(&coords);
         }
-        if let Some(s) = finished_status {
-            self.status = s;
-        }
         if repaint {
             ctx.request_repaint();
         }
     }
 
+    /// The refined design's single compact toolbar:
+    /// `編集 │ 力場 · 変換  ───  E badge │ 表示`.
+    /// Drawing tools (element / bond-order / tool / delete) live in the 2D
+    /// widget's own keyboard shortcuts, so they are intentionally absent here.
     fn toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            // ── 2D editing tools ──
-            ui.label("ツール:");
-            if ui
-                .selectable_label(self.editor.tool == Tool::Bond, "✏ 結合")
-                .clicked()
-            {
-                self.editor.tool = Tool::Bond;
-            }
-            if ui
-                .selectable_label(self.editor.tool == Tool::Select, "⬚ 選択")
-                .clicked()
-            {
-                self.editor.tool = Tool::Select;
-            }
-            if ui
-                .selectable_label(self.editor.tool == Tool::Eraser, "✖ 消去")
-                .clicked()
-            {
-                self.editor.tool = Tool::Eraser;
-            }
-
-            ui.separator();
-            ui.label("元素:");
-            for el in ELEMENTS {
-                if ui
-                    .selectable_label(self.editor.current_element == el, el)
-                    .clicked()
-                {
-                    self.editor.current_element = el.to_string();
-                }
-            }
-
-            ui.separator();
-            ui.label("次数:");
-            for (label, order) in [
-                ("単", BondOrder::Single),
-                ("二重", BondOrder::Double),
-                ("三重", BondOrder::Triple),
-            ] {
-                if ui
-                    .selectable_label(self.editor.current_bond_order == order, label)
-                    .clicked()
-                {
-                    self.editor.current_bond_order = order;
-                }
-            }
-
-            ui.separator();
-            if ui.button("↶ 元に戻す").clicked() {
+        ui.horizontal(|ui| {
+            // ── 編集 ──
+            if ui.button("↺ 元に戻す").clicked() {
                 self.editor.undo();
             }
             let cleaning = self.editor.is_cleaning();
             if ui
-                .selectable_label(cleaning, "✨ 整形")
+                .selectable_label(cleaning, "整形")
                 .on_hover_text("2Dレイアウトの自動整形（再クリックで停止）")
                 .clicked()
             {
                 self.editor.toggle_cleanup();
             }
-            if ui.button("🗑 クリア").clicked() {
+            if theme::danger_button(ui, "クリア").clicked() {
                 self.editor.molecule = chembuider_rs::Molecule::default();
                 self.editor.selected_atoms.clear();
                 self.mm = None;
-                self.status = "キャンバスをクリアしました。".to_string();
+                self.error = None;
             }
-        });
 
-        ui.separator();
+            theme::divider(ui);
 
-        ui.horizontal_wrapped(|ui| {
-            // ── 3D / MM controls ──
-            egui::ComboBox::from_label("力場")
+            // ── 力場 ──
+            theme::group_label(ui, "力場");
+            egui::ComboBox::from_id_salt("ff_kind")
                 .selected_text(self.ff_kind.label())
                 .show_ui(ui, |ui| {
                     for k in FfKind::ALL {
@@ -246,8 +189,8 @@ impl App {
                     }
                 });
 
-            if ui
-                .button("→ 3D 生成")
+            // ── 変換 ──
+            if theme::accent_button(ui, "→ 3D 生成")
                 .on_hover_text("水素を付加し初期立体構造を生成")
                 .clicked()
             {
@@ -256,38 +199,56 @@ impl App {
 
             let has_mm = self.mm.is_some();
             let minimizing = self.mm.as_ref().is_some_and(|m| m.minimizing);
-            let mm_label = if minimizing { "⛔ 停止" } else { "▶ MM最小化" };
-            if ui
-                .add_enabled(has_mm, egui::Button::new(mm_label))
-                .clicked()
-            {
+            let mm_button = if minimizing {
+                egui::Button::new(RichText::new("■ 停止").size(13.0).color(PAL.danger_text))
+                    .fill(PAL.danger_bg)
+                    .stroke(egui::Stroke::new(1.0, PAL.danger_border))
+                    .corner_radius(egui::CornerRadius::same(9))
+                    .min_size(theme::h(theme::CTRL_H))
+            } else {
+                egui::Button::new((
+                    RichText::new("▶").size(10.0).color(PAL.mm_play),
+                    RichText::new(" MM 最小化").size(13.0).color(PAL.text),
+                ))
+                .corner_radius(egui::CornerRadius::same(9))
+                .min_size(theme::h(theme::CTRL_H))
+            };
+            if ui.add_enabled(has_mm, mm_button).clicked() {
                 if let Some(mm) = self.mm.as_mut() {
                     mm.minimizing = !mm.minimizing;
                 }
             }
 
-            if let Some(mm) = self.mm.as_ref() {
-                ui.separator();
-                ui.label(format!(
-                    "E = {:.3} kJ/mol | {} steps{}",
-                    mm.energy,
-                    mm.total_steps,
-                    if mm.converged { " | 収束" } else { "" },
-                ));
-            }
+            // ── right cluster (margin-auto): エネルギー … 表示 ──
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut style = self.viewport.render_style();
+                egui::ComboBox::from_id_salt("view_style")
+                    .selected_text(style_label(style))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut style, RenderStyle::BallStick, "Ball & Stick");
+                        ui.selectable_value(&mut style, RenderStyle::BallOnly, "Ball Only");
+                        ui.selectable_value(&mut style, RenderStyle::Circles, "Circles");
+                        ui.selectable_value(&mut style, RenderStyle::Wireframe, "Wireframe");
+                    });
+                self.viewport.set_render_style(style);
+                theme::group_label(ui, "表示");
 
-            ui.separator();
-            let mut style = self.viewport.render_style();
-            egui::ComboBox::from_label("表示")
-                .selected_text(format!("{style:?}"))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut style, RenderStyle::BallStick, "BallStick");
-                    ui.selectable_value(&mut style, RenderStyle::BallOnly, "BallOnly");
-                    ui.selectable_value(&mut style, RenderStyle::Circles, "Circles");
-                    ui.selectable_value(&mut style, RenderStyle::Wireframe, "Wireframe");
-                });
-            self.viewport.set_render_style(style);
+                theme::divider(ui);
+
+                let energy = self.mm.as_ref().map(|m| (m.energy, m.total_steps));
+                theme::energy_badge(ui, energy, self.error.as_deref());
+            });
         });
+    }
+}
+
+/// Human-friendly label for the 3D render-style combo.
+fn style_label(style: RenderStyle) -> &'static str {
+    match style {
+        RenderStyle::BallStick => "Ball & Stick",
+        RenderStyle::BallOnly => "Ball Only",
+        RenderStyle::Circles => "Circles",
+        RenderStyle::Wireframe => "Wireframe",
     }
 }
 
@@ -296,31 +257,28 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.advance_mm(&ctx);
 
-        egui::Panel::top("toolbar").show(ui, |ui| {
-            self.toolbar(ui);
-        });
-
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "原子: {}  結合: {}  |  {}",
-                    self.editor.molecule.atoms.len(),
-                    self.editor.molecule.bonds.len(),
-                    self.status,
-                ));
+        let toolbar_frame = egui::Frame::new()
+            .fill(PAL.toolbar_bg)
+            .inner_margin(egui::Margin::symmetric(16, 6));
+        egui::Panel::top("toolbar")
+            .frame(toolbar_frame)
+            .show(ui, |ui| {
+                self.toolbar(ui);
             });
-        });
 
+        // Bare workspace: white 2D canvas on the left, dark 3D viewport on the
+        // right (both widgets paint their own background). No panel chrome —
+        // the refined design shows the canvases edge-to-edge.
+        let bare = egui::Frame::new().fill(PAL.panel);
         egui::Panel::left("editor_2d")
             .resizable(true)
-            .default_size(560.0)
+            .default_size(720.0)
+            .frame(bare)
             .show(ui, |ui| {
-                ui.heading("2D 構造エディタ");
                 let _ = self.editor.ui(ui);
             });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("3D ビュー + MM");
+        egui::CentralPanel::default().frame(bare).show(ui, |ui| {
             match &self.render_state {
                 Some(rs) => {
                     if let Err(e) = self.viewport.show(ui, rs) {

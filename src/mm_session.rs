@@ -50,10 +50,6 @@ impl MmSession {
         })
     }
 
-    pub fn atom_count(&self) -> usize {
-        self.mol.elements.len()
-    }
-
     /// Current positions as `[f32; 3]` arrays in Ångström, ready for
     /// `InteractiveMoleculeViewport::update_positions_angstrom`.
     pub fn positions_angstrom(&self) -> Vec<[f32; 3]> {
