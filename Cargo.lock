@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "chem_3d_builder_rs"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chembuider-rs",
  "eframe 0.35.0",
@@ -914,6 +914,7 @@ dependencies = [
  "egui-wgpu 0.35.0",
  "lin_alg",
  "moleucle_3dview_rs",
+ "rfd",
  "zunda_rs",
 ]
 

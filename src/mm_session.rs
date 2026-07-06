@@ -59,6 +59,16 @@ impl MmSession {
             .collect()
     }
 
+    /// The underlying structure (elements + bonds), for exporters.
+    pub fn mol(&self) -> &Mol3D {
+        &self.mol
+    }
+
+    /// Current positions as `[f64; 3]` arrays in Ångström, for exporters.
+    pub fn positions_f64(&self) -> Vec<[f64; 3]> {
+        self.positions.iter().map(|p| [p.x, p.y, p.z]).collect()
+    }
+
     /// Run up to `max_steps` steepest-descent iterations (with a backtracking line
     /// search). Calls the force field through `&dyn ForceField`, so it works for any
     /// of the boxed force fields. Stops `minimizing` on convergence or when stuck.

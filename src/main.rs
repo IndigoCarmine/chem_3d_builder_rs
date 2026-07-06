@@ -9,6 +9,7 @@
 //! See `bridge.rs` for the 2D → 3D conversion (hydrogen addition + initial 3D).
 
 mod bridge;
+mod export;
 mod forcefield_kind;
 mod mm_session;
 mod theme;
@@ -128,6 +129,50 @@ impl App {
         }
     }
 
+    /// Write the current 3D structure to a Mol2 or PDB file. The format is
+    /// chosen from the extension the user picks in the native save dialog
+    /// (defaults to Mol2). A no-op with an error badge if there is no 3D
+    /// structure yet. Shared by the toolbar's Export button and Ctrl+S.
+    fn export_structure(&mut self) {
+        // Take owned copies so the immutable borrow of `self.mm` ends before we
+        // touch `self.error`.
+        let (mol, positions) = match self.mm.as_ref() {
+            Some(mm) => (mm.mol().clone(), mm.positions_f64()),
+            None => {
+                self.error =
+                    Some("3D構造がありません。先に「→ 3D 生成」してください。".to_string());
+                return;
+            }
+        };
+
+        let path = match rfd::FileDialog::new()
+            .set_title("構造をエクスポート")
+            .add_filter("Tripos Mol2", &["mol2"])
+            .add_filter("PDB", &["pdb"])
+            .set_file_name("molecule.mol2")
+            .save_file()
+        {
+            Some(p) => p,
+            None => return, // user cancelled
+        };
+
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let contents = match ext.as_str() {
+            "pdb" => export::to_pdb(&mol, &positions),
+            // Default to Mol2 for `.mol2` and anything unrecognized.
+            _ => export::to_mol2(&mol, &positions),
+        };
+
+        match std::fs::write(&path, contents) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("保存に失敗しました: {e}")),
+        }
+    }
+
     /// Advance the live minimization by one frame, if running.
     fn advance_mm(&mut self, ctx: &egui::Context) {
         let spf = self.steps_per_frame;
@@ -219,6 +264,18 @@ impl App {
                 }
             }
 
+            // ── 出力 ──
+            let export_button = egui::Button::new(RichText::new("⭳ エクスポート").size(13.0))
+                .corner_radius(egui::CornerRadius::same(9))
+                .min_size(theme::h(theme::CTRL_H));
+            if ui
+                .add_enabled(has_mm, export_button)
+                .on_hover_text("Mol2 / PDB で保存 (Ctrl+S)")
+                .clicked()
+            {
+                self.export_structure();
+            }
+
             // ── right cluster (margin-auto): エネルギー … 表示 ──
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mut style = self.viewport.render_style();
@@ -256,6 +313,12 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.advance_mm(&ctx);
+
+        // Ctrl+S (Cmd+S on macOS) exports the current structure. Consume the key
+        // so it doesn't also reach the 2D editor widget.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
+            self.export_structure();
+        }
 
         let toolbar_frame = egui::Frame::new()
             .fill(PAL.toolbar_bg)
