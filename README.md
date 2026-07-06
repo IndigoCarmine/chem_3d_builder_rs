@@ -28,3 +28,25 @@ GUI は wgpu レンダラを使用（`eframe` の `wgpu` フィーチャ）。eg
 ```sh
 cargo run --release
 ```
+
+## リリース / インストーラー
+
+バージョンタグ（`v*`、例 `v0.4.0`）を push すると、GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）が 3 OS 分のネイティブインストーラーをビルドし、同名の GitHub Release に添付する。
+
+| OS | 生成物 | ツール |
+|---|---|---|
+| Windows | `chem_3d_builder-<ver>-setup.exe` | NSIS（[`packaging/windows/installer.nsi`](packaging/windows/installer.nsi)） |
+| macOS | `chem_3d_builder-<ver>.dmg`（ユニバーサルバイナリ） | `.app` バンドル + `hdiutil` |
+| Linux | `chem_3d_builder-<ver>-x86_64.AppImage` | `linuxdeploy` + gtk プラグイン |
+
+リリース手順:
+
+```sh
+# Cargo.toml の version を上げてコミットしてから
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+アイコンは [`assets/icon.svg`](assets/icon.svg) を各形式（PNG / ICNS）へ CI 内で変換して使用する（Windows は既定アイコン）。差し替えたい場合はこの SVG を編集する。
+
+> インストーラーはコード署名していないため、初回起動時に SmartScreen（Windows）や Gatekeeper（macOS: 右クリック →「開く」）の警告が出る。署名するには各社の証明書とワークフローへの署名ステップ追加が必要。

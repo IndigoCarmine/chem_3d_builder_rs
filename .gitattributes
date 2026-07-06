@@ -1,0 +1,8 @@
+# Keep CI / packaging scripts LF so the Linux & macOS runners' bash steps and
+# the .desktop entry are never checked out with CRLF (which would break them).
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sh        text eol=lf
+*.desktop   text eol=lf
+*.plist     text eol=lf
+*.svg       text eol=lf

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Chem 3D Builder
+Comment=Draw a 2D structure, build it in 3D, and run MM minimization
+Exec=chem_3d_builder_rs
+Icon=chem_3d_builder_rs
+Categories=Education;Science;
+Terminal=false
