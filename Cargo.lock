@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "chem_3d_builder_rs"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chembuider-rs",
  "eframe 0.35.0",
