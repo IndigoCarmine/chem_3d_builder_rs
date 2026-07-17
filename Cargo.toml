@@ -1,14 +1,20 @@
 [package]
 name = "chem_3d_builder_rs"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
+# Linking OpenBabel (GPL-2.0-only) narrows what was already copyleft via
+# zunda_rs (GPL-2.0-or-later) to GPL-2.0-only.
+license = "GPL-2.0-only"
 
 [dependencies]
 chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs" }
+# Pinned past v0.3.0: that tag resolves BABEL_DATADIR to the build machine's
+# absolute path, which leaves a packaged build with no force fields and no
+# gen3d. Move to a tag once one ships with the fix.
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", rev = "43c1726dfa529b3bd3de7050e1b95dafd4f8a7bf" }
 moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs" }
 eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "wgpu"] }
 egui = "0.35.0"
 egui-wgpu = "0.35.0"
 lin_alg = { version = "1.4.2", features = ["computer_graphics"] }
-zunda_rs = "0.5.0"
 rfd = "0.17"

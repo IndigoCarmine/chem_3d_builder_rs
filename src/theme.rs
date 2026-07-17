@@ -211,12 +211,13 @@ pub fn danger_button(ui: &mut Ui, label: &str) -> Response {
 }
 
 /// The right-aligned read-out badge. Priority: `error` (red) → `energy` (green
-/// `E value kJ/mol │ steps`) → muted `E 未計算`.
+/// `E value unit │ steps`) → muted `E 未計算`. The unit comes from the data: it
+/// varies by force field, so it cannot be a literal here.
 ///
 /// NOTE: must be placed inside a right-to-left toolbar cluster. `ui.horizontal`
 /// then inherits that direction (which keeps the frame content-sized rather
 /// than stretched), so the pieces are added in reverse to read left-to-right.
-pub fn energy_badge(ui: &mut Ui, energy: Option<(f64, usize)>, error: Option<&str>) {
+pub fn energy_badge(ui: &mut Ui, energy: Option<(f64, &str, usize)>, error: Option<&str>) {
     let p = &*PAL;
     let (bg, border) = if error.is_some() {
         (p.danger_bg, p.danger_border)
@@ -238,8 +239,8 @@ pub fn energy_badge(ui: &mut Ui, energy: Option<(f64, usize)>, error: Option<&st
                     // reversed → "⚠ {msg}"
                     ui.label(RichText::new(msg).size(11.5).color(p.danger_text));
                     ui.label(RichText::new("⚠").size(12.0).color(p.danger_text));
-                } else if let Some((e, steps)) = energy {
-                    // reversed → "E {value} kJ/mol │ {steps} steps"
+                } else if let Some((e, unit, steps)) = energy {
+                    // reversed → "E {value} {unit} │ {steps} steps"
                     ui.label(
                         RichText::new(format!("{steps} steps"))
                             .monospace()
@@ -248,7 +249,7 @@ pub fn energy_badge(ui: &mut Ui, energy: Option<(f64, usize)>, error: Option<&st
                     );
                     ui.label(RichText::new("│").size(12.0).color(p.energy_div));
                     ui.label(
-                        RichText::new("kJ/mol")
+                        RichText::new(unit)
                             .monospace()
                             .size(11.0)
                             .color(p.energy_unit),

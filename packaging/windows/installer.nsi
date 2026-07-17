@@ -40,6 +40,20 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File "target\release\${EXENAME}"
 
+  ; OpenBabel runtime. The layout is load-bearing, not incidental:
+  ;   - openbabel-3.dll must be beside the exe or it will not start at all,
+  ;     and OpenBabel finds its .obf plugins in that DLL's directory.
+  ;   - data\ beside the exe is what makes the app resolve BABEL_DATADIR here
+  ;     instead of at the absolute path baked in on the build machine. Without
+  ;     it the app still launches, and then force fields and 3D generation are
+  ;     silently dead — a failure that never reproduces on a dev box.
+  ; `cargo build` puts the DLLs and plugins in target\release; the release
+  ; workflow stages data\ next to them.
+  File "target\release\openbabel-3.dll"
+  File "target\release\inchi.dll"
+  File "target\release\*.obf"
+  File /r "target\release\data"
+
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
@@ -60,6 +74,10 @@ SectionEnd
 
 Section "Uninstall"
   Delete "$INSTDIR\${EXENAME}"
+  Delete "$INSTDIR\openbabel-3.dll"
+  Delete "$INSTDIR\inchi.dll"
+  Delete "$INSTDIR\*.obf"
+  RMDir /r "$INSTDIR\data"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
 
