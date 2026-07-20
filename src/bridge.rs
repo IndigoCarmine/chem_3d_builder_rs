@@ -47,10 +47,7 @@ fn mol_block(src: &chembuider_rs::Molecule) -> String {
     for a in &src.atoms {
         s.push_str(&format!(
             "{:>10.4}{:>10.4}{:>10.4} {:<3} 0  0  0  0  0  0  0  0  0  0  0  0\n",
-            a.pos[0] as f64,
-            a.pos[1] as f64,
-            0.0,
-            a.element,
+            a.pos[0] as f64, a.pos[1] as f64, 0.0, a.element,
         ));
     }
 
@@ -60,7 +57,12 @@ fn mol_block(src: &chembuider_rs::Molecule) -> String {
         let (Some(i), Some(j)) = (index_of(b.begin), index_of(b.end)) else {
             continue;
         };
-        s.push_str(&format!("{:>3}{:>3}{:>3}  0  0  0  0\n", i, j, order_num(&b.order)));
+        s.push_str(&format!(
+            "{:>3}{:>3}{:>3}  0  0  0  0\n",
+            i,
+            j,
+            order_num(&b.order)
+        ));
     }
 
     // `M  CHG` properties rather than the atom block's legacy charge column,
@@ -124,8 +126,8 @@ pub fn to_ob_molecule(src: &chembuider_rs::Molecule) -> Result<Molecule, String>
     const ATTEMPTS: usize = 5;
     let mut last_err = String::new();
     for _ in 0..ATTEMPTS {
-        let mut mol = Molecule::parse(&block, "mol")
-            .map_err(|e| format!("構造の解釈に失敗しました: {e}"))?;
+        let mut mol =
+            Molecule::parse(&block, "mol").map_err(|e| format!("構造の解釈に失敗しました: {e}"))?;
 
         // The reader gave us implicit hydrogens; MM and the viewer need real atoms.
         mol.add_hydrogens();
@@ -299,7 +301,6 @@ mod tests {
         atom(mol, "C", x, y, 0)
     }
 
-
     /// 5-benzylidenebarbituric acid: three carbonyls plus an exocyclic C=C on the
     /// ring carbon between two of them. Grounds that this shape converts at all,
     /// so a report of "it won't go 3D" points at the drawing, not the chemistry.
@@ -328,7 +329,11 @@ mod tests {
             })
             .collect();
         for i in 0..6 {
-            let order = if i % 2 == 0 { BondOrder::Double } else { BondOrder::Single };
+            let order = if i % 2 == 0 {
+                BondOrder::Double
+            } else {
+                BondOrder::Single
+            };
             m.add_bond(ph[i], ph[(i + 1) % 6], order);
         }
         m.add_bond(ch, ph[2], BondOrder::Single);
@@ -364,8 +369,6 @@ mod tests {
         let err = to_ob_molecule(&m).expect_err("overlapping atoms must be reported");
         assert!(err.contains("同じ位置"), "unhelpful message: {err}");
     }
-
-
 
     #[test]
     fn methane_gets_four_hydrogens() {

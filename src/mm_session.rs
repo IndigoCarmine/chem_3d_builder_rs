@@ -21,9 +21,9 @@
 //! frame is plain coordinate data.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::Arc;
 
 use openbabel::{Algorithm, Minimizer, Molecule, OptStep, StopReason};
 
@@ -173,7 +173,7 @@ fn run_minimize(
             // caller turns `produced_any == false` into the user-facing error.
             StopReason::Failed => return (mol, Outcome::StepLimit, produced_any),
             StopReason::MaxSteps if total >= MAX_TOTAL_STEPS => {
-                return (mol, Outcome::StepLimit, produced_any)
+                return (mol, Outcome::StepLimit, produced_any);
             }
             // Still descending. The next segment restarts conjugate gradients
             // from the current coordinates — the molecule carries them forward,
@@ -501,7 +501,6 @@ mod tests {
         assert_eq!(outcome, Outcome::Cancelled);
         assert!(!produced && frames.is_empty(), "cancelled run did work");
     }
-
 
     /// Grounds the FfKind line-up: every id we offer must resolve in OpenBabel.
     #[test]
