@@ -1,12 +1,16 @@
 name: Release
 
 # Pushing a `v*` tag builds native installers for Windows / macOS / Linux and
-# publishes them as a GitHub Release. `workflow_dispatch` builds the same
-# artifacts without releasing, which is handy for testing changes to this file.
+# publishes them as a GitHub Release. `workflow_dispatch` and `pull_request`
+# build the same artifacts without releasing, which is handy for testing
+# changes to this file and for catching packaging breakage before merge (the
+# publish job is gated on the ref being a tag, so PR/dispatch runs stop after
+# building).
 on:
   push:
     tags:
       - "v*"
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -329,7 +333,8 @@ jobs:
     name: Publish release
     needs: [linux, windows, macos]
     runs-on: ubuntu-latest
-    # Only tags produce a release; workflow_dispatch runs stop after building.
+    # Only tags produce a release; pull_request / workflow_dispatch runs stop
+    # after building.
     if: github.ref_type == 'tag'
     permissions:
       contents: write # required to create the release and upload assets
