@@ -13,6 +13,8 @@ use egui::{
 };
 use std::sync::LazyLock;
 
+use crate::mm_session::{Badge, Outcome};
+
 /// Uniform height (px) for every toolbar control — buttons, combo boxes and the
 /// energy badge — so the single toolbar row lines up cleanly.
 pub const CTRL_H: f32 = 32.0;
@@ -211,13 +213,17 @@ pub fn danger_button(ui: &mut Ui, label: &str) -> Response {
 }
 
 /// The right-aligned read-out badge. Priority: `error` (red) → `energy` (green
-/// `E value unit │ steps`) → muted `E 未計算`. The unit comes from the data: it
-/// varies by force field, so it cannot be a literal here.
+/// `E value unit │ steps · outcome`) → muted `E 未計算`. The unit comes from the
+/// data: it varies by force field, so it cannot be a literal here.
+///
+/// The outcome is spelled out because an energy on its own cannot tell a
+/// minimized geometry from one that merely ran out of steps — showing the number
+/// without it is what made unconverged results look finished.
 ///
 /// NOTE: must be placed inside a right-to-left toolbar cluster. `ui.horizontal`
 /// then inherits that direction (which keeps the frame content-sized rather
 /// than stretched), so the pieces are added in reverse to read left-to-right.
-pub fn energy_badge(ui: &mut Ui, energy: Option<(f64, &str, usize)>, error: Option<&str>) {
+pub fn energy_badge(ui: &mut Ui, energy: Option<Badge>, error: Option<&str>) {
     let p = &*PAL;
     let (bg, border) = if error.is_some() {
         (p.danger_bg, p.danger_border)
@@ -239,8 +245,24 @@ pub fn energy_badge(ui: &mut Ui, energy: Option<(f64, &str, usize)>, error: Opti
                     // reversed → "⚠ {msg}"
                     ui.label(RichText::new(msg).size(11.5).color(p.danger_text));
                     ui.label(RichText::new("⚠").size(12.0).color(p.danger_text));
-                } else if let Some((e, unit, steps)) = energy {
-                    // reversed → "E {value} {unit} │ {steps} steps"
+                } else if let Some(Badge {
+                    energy: e,
+                    unit,
+                    steps,
+                    outcome,
+                }) = energy
+                {
+                    // reversed → "E {value} {unit} │ {steps} steps · {outcome}"
+                    if let Some(note) = outcome_note(outcome) {
+                        let color = match outcome {
+                            // Not a failure, but the geometry is not minimized —
+                            // it must not read like an ordinary finished result.
+                            Outcome::StepLimit | Outcome::Cancelled => p.danger_text,
+                            Outcome::Converged | Outcome::Running => p.energy_steps,
+                        };
+                        ui.label(RichText::new(note).size(11.5).color(color));
+                        ui.label(RichText::new("·").size(12.0).color(p.energy_div));
+                    }
                     ui.label(
                         RichText::new(format!("{steps} steps"))
                             .monospace()
@@ -273,6 +295,17 @@ pub fn energy_badge(ui: &mut Ui, energy: Option<(f64, &str, usize)>, error: Opti
                 }
             });
         });
+}
+
+/// The badge's trailing note for how a run ended. `None` mid-run: the step count
+/// is already climbing, which says "working" without extra words.
+fn outcome_note(outcome: Outcome) -> Option<&'static str> {
+    match outcome {
+        Outcome::Running => None,
+        Outcome::Converged => Some("収束"),
+        Outcome::StepLimit => Some("未収束 (上限)"),
+        Outcome::Cancelled => Some("中断"),
+    }
 }
 
 /// A thin vertical divider matching the toolbar group separators.

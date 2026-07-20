@@ -100,16 +100,136 @@ pub fn to_ob_molecule(src: &chembuider_rs::Molecule) -> Result<Molecule, String>
         }
     }
 
-    let mut mol = Molecule::parse(&mol_block(src), "mol")
-        .map_err(|e| format!("構造の解釈に失敗しました: {e}"))?;
-
-    // The reader gave us implicit hydrogens; MM and the viewer need real atoms.
-    mol.add_hydrogens();
-    if !mol.generate_3d() {
-        return Err("3D 構造の生成に失敗しました。".to_string());
+    // Two atoms drawn on top of each other send OpenBabel's builder to NaN, and
+    // it reports success anyway (see below). Catching it here is what lets us
+    // name the actual mistake instead of describing the symptom.
+    if let Some((a, b)) = coincident_atoms(src) {
+        return Err(format!(
+            "原子 {a} と {b} がほぼ同じ位置にあります。重なった原子を削除してください。"
+        ));
     }
 
-    Ok(mol)
+    let block = mol_block(src);
+
+    // OpenBabel's 3D builder is not deterministic, and on some perfectly ordinary
+    // structures it fails outright a fraction of the time — 5-benzylidenebarbituric
+    // acid, for one, lands on overlapping atoms or NaN coordinates in roughly one
+    // attempt in eight. The failures are independent, so simply building again
+    // clears them; what is *not* acceptable is handing a broken geometry on,
+    // which is what happened before `validate_geometry` existed (see it for why
+    // OpenBabel's own success flag cannot be trusted).
+    //
+    // Each attempt re-parses, because a failed `generate_3d` leaves its wreckage
+    // in the molecule it was given.
+    const ATTEMPTS: usize = 5;
+    let mut last_err = String::new();
+    for _ in 0..ATTEMPTS {
+        let mut mol = Molecule::parse(&block, "mol")
+            .map_err(|e| format!("構造の解釈に失敗しました: {e}"))?;
+
+        // The reader gave us implicit hydrogens; MM and the viewer need real atoms.
+        mol.add_hydrogens();
+        if !mol.generate_3d() {
+            last_err = "3D 構造の生成に失敗しました。".to_string();
+            continue;
+        }
+        match validate_geometry(&mol) {
+            Ok(()) => return Ok(mol),
+            Err(e) => last_err = e,
+        }
+    }
+
+    Err(format!(
+        "{last_err}\n（{ATTEMPTS} 回試行しました。もう一度お試しいただくか、2D 構造を描き直してください。）"
+    ))
+}
+
+/// Reject a geometry OpenBabel reported as a success but cannot actually be used.
+///
+/// `generate_3d` returning true is not enough. When OBBuilder cannot place an
+/// atom it fails in one of two ways, and calls both of them success:
+///
+/// * it writes **NaN coordinates** (printing "There exists NaN in calculated
+///   coordinates" to stderr and nothing else), or
+/// * it writes finite coordinates with **two atoms on the same point**, which
+///   stays invisible until a force field divides by that zero distance and every
+///   energy comes back NaN.
+///
+/// Either way the structure flows on to the viewer, which draws nothing, and to
+/// the energy badge, which reads `E NaN` — with no error raised anywhere. That
+/// silent failure is precisely what "the structure won't go 3D" looks like from
+/// the outside, so it has to be caught here.
+fn validate_geometry(mol: &Molecule) -> Result<(), String> {
+    let coords = coordinates(mol);
+
+    if !coords.iter().flatten().all(|v| v.is_finite()) {
+        return Err("3D 構造の生成に失敗しました（座標が NaN になりました）。\
+                    原子の重なりや無理な結合がないか確認してください。"
+            .to_string());
+    }
+
+    // The shortest real bond is H–H at about 0.74 Å, so anything under half an
+    // Ångström is not a tight contact — it is two atoms placed on top of each
+    // other.
+    const MIN_SEPARATION: f64 = 0.5;
+    for i in 0..coords.len() {
+        for j in (i + 1)..coords.len() {
+            let (p, q) = (coords[i], coords[j]);
+            let d2 = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2);
+            if d2 < MIN_SEPARATION * MIN_SEPARATION {
+                return Err(format!(
+                    "3D 構造の生成に失敗しました（原子 {} と {} が重なっています: {:.3} Å）。\
+                     2D 構造を描き直すか、原子の配置を広げてみてください。",
+                    i + 1,
+                    j + 1,
+                    d2.sqrt()
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// The first pair of atoms drawn close enough together to be the same point, as
+/// 1-based indices for the message.
+///
+/// The editor has no fixed unit — a structure drawn by clicking is in the tens,
+/// one built in a test is around 1.4 per bond — so the threshold is relative to
+/// the shortest bond actually drawn rather than an absolute distance.
+fn coincident_atoms(src: &chembuider_rs::Molecule) -> Option<(usize, usize)> {
+    let dist = |p: [f32; 2], q: [f32; 2]| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt();
+
+    let index_of = |id: u32| src.atoms.iter().position(|a| a.id == id);
+    let mut lengths: Vec<f32> = src
+        .bonds
+        .iter()
+        .filter_map(|b| Some((index_of(b.begin)?, index_of(b.end)?)))
+        .map(|(i, j)| dist(src.atoms[i].pos, src.atoms[j].pos))
+        .collect();
+    if lengths.is_empty() {
+        return None; // nothing bonded yet: no scale to judge against
+    }
+    // The median, not the minimum: an overlapping pair is usually bonded to each
+    // other, and a near-zero-length bond would otherwise set the scale by which
+    // it is then judged normal.
+    lengths.sort_by(|a, b| a.total_cmp(b));
+    let typical = lengths[lengths.len() / 2];
+    if typical <= 0.0 {
+        return None;
+    }
+    // A tenth of a normal bond: far below any real one, far above the jitter
+    // between two deliberate clicks.
+    let limit = typical * 0.1;
+
+    for i in 0..src.atoms.len() {
+        for j in (i + 1)..src.atoms.len() {
+            if dist(src.atoms[i].pos, src.atoms[j].pos) < limit {
+                return Some((i + 1, j + 1));
+            }
+        }
+    }
+    None
 }
 
 /// Bulk coordinate read — one lock, versus a lock and three FFI calls per atom
@@ -178,6 +298,74 @@ mod tests {
     fn carbon(mol: &mut chembuider_rs::Molecule, x: f32, y: f32) -> u32 {
         atom(mol, "C", x, y, 0)
     }
+
+
+    /// 5-benzylidenebarbituric acid: three carbonyls plus an exocyclic C=C on the
+    /// ring carbon between two of them. Grounds that this shape converts at all,
+    /// so a report of "it won't go 3D" points at the drawing, not the chemistry.
+    #[test]
+    fn benzylidene_barbituric_acid_converts() {
+        let mut m = chembuider_rs::Molecule::default();
+        let c2 = carbon(&mut m, 0.0, 1.4);
+        let n1 = atom(&mut m, "N", -1.21, 0.7, 0);
+        let c6 = carbon(&mut m, -1.21, -0.7);
+        let c5 = carbon(&mut m, 0.0, -1.4);
+        let c4 = carbon(&mut m, 1.21, -0.7);
+        let n3 = atom(&mut m, "N", 1.21, 0.7, 0);
+        for (a, b) in [(c2, n1), (n1, c6), (c6, c5), (c5, c4), (c4, n3), (n3, c2)] {
+            m.add_bond(a, b, BondOrder::Single);
+        }
+        for (c, x, y) in [(c2, 0.0, 2.8), (c6, -2.42, -1.4), (c4, 2.42, -1.4)] {
+            let o = atom(&mut m, "O", x, y, 0);
+            m.add_bond(c, o, BondOrder::Double);
+        }
+        let ch = carbon(&mut m, 0.0, -2.8);
+        m.add_bond(c5, ch, BondOrder::Double);
+        let ph: Vec<u32> = (0..6)
+            .map(|i| {
+                let a = std::f32::consts::FRAC_PI_3 * i as f32;
+                carbon(&mut m, 1.21 + 1.4 * a.cos(), -3.5 - 1.4 * a.sin())
+            })
+            .collect();
+        for i in 0..6 {
+            let order = if i % 2 == 0 { BondOrder::Double } else { BondOrder::Single };
+            m.add_bond(ph[i], ph[(i + 1) % 6], order);
+        }
+        m.add_bond(ch, ph[2], BondOrder::Single);
+
+        // Repeatedly, because this is exactly the structure OpenBabel's builder
+        // fails on at random — about one attempt in eight lands on overlapping
+        // atoms or NaN coordinates. A single pass here would go green while the
+        // app still failed for the user roughly every eighth press.
+        for run in 0..20 {
+            let ob = to_ob_molecule(&m)
+                .unwrap_or_else(|e| panic!("run {run}: benzylidene barbituric acid failed: {e}"));
+            assert_eq!(ob.formula(), "C11H8N2O3");
+            assert!(
+                ob.energy("UFF").is_some_and(|e| e.is_finite()),
+                "run {run}: a converted structure must have a real energy, not NaN"
+            );
+        }
+    }
+
+    /// Two atoms on the same spot drive OpenBabel's builder to NaN coordinates
+    /// while `generate_3d` still returns true, so the structure silently reaches
+    /// the viewer as nothing at all. Both guards exist to stop that.
+    #[test]
+    fn overlapping_atoms_are_rejected_not_silently_nan() {
+        let mut m = chembuider_rs::Molecule::default();
+        let a = carbon(&mut m, 0.0, 0.0);
+        let b = carbon(&mut m, 1.4, 0.0);
+        m.add_bond(a, b, BondOrder::Single);
+        // A third carbon all but on top of `b` — a double-click in the editor.
+        let c = carbon(&mut m, 1.4 + 0.001, 0.0);
+        m.add_bond(b, c, BondOrder::Single);
+
+        let err = to_ob_molecule(&m).expect_err("overlapping atoms must be reported");
+        assert!(err.contains("同じ位置"), "unhelpful message: {err}");
+    }
+
+
 
     #[test]
     fn methane_gets_four_hydrogens() {

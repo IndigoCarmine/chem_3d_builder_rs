@@ -200,7 +200,6 @@ impl App {
         // None in both Empty and Running, which is exactly what the MM and
         // export buttons want to be disabled on.
         let has_mol = self.mm.mol().is_some();
-        let playing = self.mm.is_playing();
 
         ui.horizontal(|ui| {
             // ── 編集 ──
@@ -250,16 +249,13 @@ impl App {
                 self.generate_3d();
             }
 
-            let mm_button = if playing {
+            // A run now continues until the geometry converges, so it can last
+            // longer than the old fixed budget did — the button stays live and
+            // stops it at the next segment boundary.
+            let mm_button = if running {
                 egui::Button::new(RichText::new("■ 停止").size(13.0).color(PAL.danger_text))
                     .fill(PAL.danger_bg)
                     .stroke(egui::Stroke::new(1.0, PAL.danger_border))
-                    .corner_radius(egui::CornerRadius::same(9))
-                    .min_size(theme::h(theme::CTRL_H))
-            } else if running {
-                // OpenBabel's minimizer has no cancel path, so this goes inert
-                // rather than offering a stop that would not stop anything.
-                egui::Button::new(RichText::new("⏳ 計算中…").size(13.0).color(PAL.text))
                     .corner_radius(egui::CornerRadius::same(9))
                     .min_size(theme::h(theme::CTRL_H))
             } else {
@@ -270,9 +266,11 @@ impl App {
                 .corner_radius(egui::CornerRadius::same(9))
                 .min_size(theme::h(theme::CTRL_H))
             };
-            if ui.add_enabled(has_mol, mm_button).clicked() {
-                if playing {
-                    self.mm.stop();
+            // `has_mol` is false while running (the worker owns the molecule), so
+            // the stop button has to be enabled on its own terms.
+            if ui.add_enabled(has_mol || running, mm_button).clicked() {
+                if running {
+                    self.mm.cancel();
                 } else {
                     let ctx = ui.ctx().clone();
                     self.mm.start(self.ff_kind, self.steps_per_frame, &ctx);
