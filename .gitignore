@@ -1,1 +1,20 @@
 /target
+
+# Release-workflow scratch output (also produced when building installers locally)
+/dist
+/artifacts
+/AppDir
+/universal
+/dmg_root
+icon.iconset
+*.AppImage
+*.dmg
+"Chem 3D Builder.app"
+linuxdeploy
+linuxdeploy-plugin-gtk.sh
+
+# act (the local GitHub Actions runner) -- a downloaded tool, not part of the project
+act
+act.exe
+.secrets
+.actrc.local

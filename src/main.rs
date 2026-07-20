@@ -89,7 +89,8 @@ impl App {
         }
 
         #[cfg(target_os = "macos")]
-        if let Ok(bytes) = std::fs::read("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc") {
+        if let Ok(bytes) = std::fs::read("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc")
+        {
             fonts.font_data.insert(
                 "japanese".to_owned(),
                 std::sync::Arc::new(egui::FontData::from_owned(bytes)),
@@ -357,8 +358,9 @@ impl eframe::App for App {
                 let _ = self.editor.ui(ui);
             });
 
-        egui::CentralPanel::default().frame(bare).show(ui, |ui| {
-            match &self.render_state {
+        egui::CentralPanel::default()
+            .frame(bare)
+            .show(ui, |ui| match &self.render_state {
                 Some(rs) => {
                     if let Err(e) = self.viewport.show(ui, rs) {
                         ui.colored_label(egui::Color32::RED, format!("3D描画エラー: {e}"));
@@ -368,8 +370,7 @@ impl eframe::App for App {
                     ui.heading("wgpu バックエンドが利用できません");
                     ui.label("eframe を wgpu レンダラで起動してください。");
                 }
-            }
-        });
+            });
     }
 
     fn on_exit(&mut self) {

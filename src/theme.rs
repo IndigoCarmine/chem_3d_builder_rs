@@ -192,11 +192,16 @@ pub fn group_label(ui: &mut Ui, text: &str) {
 pub fn accent_button(ui: &mut Ui, label: &str) -> Response {
     let p = &*PAL;
     ui.add(
-        Button::new(RichText::new(label).size(13.0).strong().color(Color32::WHITE))
-            .fill(p.accent)
-            .stroke(Stroke::new(1.0, p.accent_border))
-            .corner_radius(CornerRadius::same(9))
-            .min_size(vec2(0.0, CTRL_H)),
+        Button::new(
+            RichText::new(label)
+                .size(13.0)
+                .strong()
+                .color(Color32::WHITE),
+        )
+        .fill(p.accent)
+        .stroke(Stroke::new(1.0, p.accent_border))
+        .corner_radius(CornerRadius::same(9))
+        .min_size(vec2(0.0, CTRL_H)),
     )
 }
 

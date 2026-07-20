@@ -1,30 +1,22 @@
 name: Release
 
-# Build native installers for Windows / macOS / Linux and attach them to a
-# GitHub Release whenever a version tag (e.g. `v0.4.0`) is pushed.
+# Pushing a `v*` tag builds native installers for Windows / macOS / Linux and
+# publishes them as a GitHub Release. `workflow_dispatch` builds the same
+# artifacts without releasing, which is handy for testing changes to this file.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
-permissions:
-  contents: write # required to create the release and upload assets
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux (AppImage)
-            os: ubuntu-22.04 # oldest supported → widest glibc compatibility
-          - name: Windows (NSIS)
-            os: windows-latest
-          - name: macOS (dmg)
-            os: macos-latest
-
+  # ---------------------------------------------------------------- Linux --
+  linux:
+    name: Linux (AppImage)
+    runs-on: ubuntu-22.04 # oldest supported → widest glibc compatibility
     steps:
       - uses: actions/checkout@v4
 
@@ -34,9 +26,7 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
-      # ---------------------------------------------------------------- Linux
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -45,17 +35,21 @@ jobs:
             libxkbcommon-dev libwayland-dev libssl-dev \
             desktop-file-utils patchelf
 
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build
         run: cargo build --release
 
-      - name: Package AppImage (Linux)
-        if: runner.os == 'Linux'
+      - name: Package AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1 # run the AppImage tools without FUSE
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          # Tags are the real source of truth; workflow_dispatch has no tag, so
+          # fall back to a dev version rather than the branch name.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
           BIN=chem_3d_builder_rs
           APPDIR=AppDir
 
@@ -109,13 +103,29 @@ jobs:
           mkdir -p dist
           mv "$OUTPUT" dist/
 
-      # -------------------------------------------------------------- Windows
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+
+  # -------------------------------------------------------------- Windows --
+  windows:
+    name: Windows (NSIS)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
         run: cargo build --release
 
-      - name: Stage OpenBabel runtime (Windows)
-        if: runner.os == 'Windows'
+      - name: Stage OpenBabel runtime
         shell: pwsh
         run: |
           # openbabel-sys's build script already drops openbabel-3.dll,
@@ -145,11 +155,16 @@ jobs:
             throw "no .obf plugins in target\release"
           }
 
-      - name: Package NSIS installer (Windows)
-        if: runner.os == 'Windows'
+      - name: Package NSIS installer
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          # Tags are the real source of truth; workflow_dispatch has no tag, so
+          # fall back to a dev version rather than the branch name.
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          } else {
+            $version = '0.0.0-dev'
+          }
           $env:PATH += ';C:\Program Files (x86)\NSIS'
           if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
             choco install nsis -y --no-progress
@@ -159,9 +174,26 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Move-Item "chem_3d_builder-$version-setup.exe" dist\
 
-      # ---------------------------------------------------------------- macOS
-      - name: Build universal binary (macOS)
-        if: runner.os == 'macOS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- macOS --
+  macos:
+    name: macOS (dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build universal binary
         run: |
           set -euo pipefail
           BIN=chem_3d_builder_rs
@@ -206,11 +238,16 @@ jobs:
           test -f universal/data/UFF.prm || { echo "force-field data missing" >&2; exit 1; }
           echo "MACOS_DYLIB=$DYLIB" >> "$GITHUB_ENV"
 
-      - name: Package dmg (macOS)
-        if: runner.os == 'macOS'
+      - name: Package dmg
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          # Tags are the real source of truth; workflow_dispatch has no tag, so
+          # fall back to a dev version rather than the branch name.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
           BIN=chem_3d_builder_rs
           APP="Chem 3D Builder.app"
           brew install librsvg
@@ -268,9 +305,33 @@ jobs:
           mkdir -p dist
           mv "chem_3d_builder-${VERSION}.dmg" dist/
 
-      # -------------------------------------------------------------- Publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+          if-no-files-found: error
+
+  # -------------------------------------------------------------- Release --
+  release:
+    name: Publish release
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    # Only tags produce a release; workflow_dispatch runs stop after building.
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write # required to create the release and upload assets
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts
+
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: artifacts/*
+          generate_release_notes: true
           fail_on_unmatched_files: true
