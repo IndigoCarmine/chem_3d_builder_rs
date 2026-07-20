@@ -1,12 +1,16 @@
 name: Release
 
 # Pushing a `v*` tag builds native installers for Windows / macOS / Linux and
-# publishes them as a GitHub Release. `workflow_dispatch` builds the same
-# artifacts without releasing, which is handy for testing changes to this file.
+# publishes them as a GitHub Release. `workflow_dispatch` and `pull_request`
+# build the same artifacts without releasing, which is handy for testing
+# changes to this file and for catching packaging breakage before merge (the
+# publish job is gated on the ref being a tag, so PR/dispatch runs stop after
+# building).
 on:
   push:
     tags:
       - "v*"
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -63,7 +67,7 @@ jobs:
           # OpenBabel runtime, beside the binary. The app resolves BABEL_LIBDIR
           # to its own directory and BABEL_DATADIR to <exe_dir>/data, so both
           # have to land in usr/bin. linuxdeploy cannot do this for us: it
-          # follows NEEDED entries, and the .obf plugins are dlopen'd, so it
+          # follows NEEDED entries, and the .so plugins are dlopen'd, so it
           # never sees them. libopenbabel.so *is* NEEDED, so it gets bundled.
           #
           # Ask cargo which build directory it linked rather than globbing
@@ -74,7 +78,9 @@ jobs:
             | head -1)
           test -n "$OB_OUT" || { echo "openbabel-sys build directory not found" >&2; exit 1; }
 
-          cp "$(dirname "$(find "$OB_OUT/lib/openbabel" -name '*.obf' | head -1)")"/*.obf \
+          # Unix plugins are versioned MODULE libraries, e.g.
+          # lib/openbabel/3.2.1/*.so (the .obf name is Windows-only).
+          cp "$(dirname "$(find "$OB_OUT/lib/openbabel" -name '*.so' | head -1)")"/*.so \
              "$APPDIR/usr/bin/"
           cp -r "$(find "$OB_OUT/share/openbabel" -mindepth 1 -maxdepth 1 -type d | head -1)" \
                 "$APPDIR/usr/bin/data"
@@ -82,7 +88,7 @@ jobs:
           # Without these the AppImage still starts, and then has no force fields
           # and no 3D generation. Fail the release instead.
           test -f "$APPDIR/usr/bin/data/UFF.prm" || { echo "force-field data missing from AppDir" >&2; exit 1; }
-          ls "$APPDIR"/usr/bin/*.obf >/dev/null || { echo "no .obf plugins in AppDir" >&2; exit 1; }
+          ls "$APPDIR"/usr/bin/*.so >/dev/null || { echo "no .so plugins in AppDir" >&2; exit 1; }
 
           rsvg-convert -w 256 -h 256 assets/icon.svg \
              -o "$APPDIR/usr/share/icons/hicolor/256x256/apps/$BIN.png"
@@ -148,7 +154,7 @@ jobs:
 
           # Missing any of this still produces an app that launches, and then has
           # no force fields and no 3D generation. Fail the release instead.
-          foreach ($f in 'openbabel-3.dll', 'inchi.dll', 'data\UFF.prm', 'data\MMFF94.par') {
+          foreach ($f in 'openbabel-3.dll', 'inchi.dll', 'data\UFF.prm', 'data\mmff94.ff') {
             if (-not (Test-Path "target\release\$f")) { throw "missing from bundle: $f" }
           }
           if (@(Get-ChildItem target\release\*.obf).Count -eq 0) {
@@ -193,6 +199,17 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
+      - name: Disable Cairo (breaks the x86_64 cross-build)
+        # OpenBabel auto-detects Cairo and compiles its png2format plugin
+        # against it. macos-latest is arm64 and Homebrew's Cairo is arm64-only,
+        # so the x86_64 half of the universal build fails to link (undefined
+        # _cairo_* symbols). This app ships no PNG depiction, so make Cairo
+        # undiscoverable before building — with it gone, OpenBabel simply skips
+        # png2format, keeping the x86_64 and arm64 plugin sets identical for the
+        # lipo step below. librsvg (installed later for packaging) pulls Cairo
+        # back in, which is fine: that is a separate, post-build step.
+        run: brew uninstall --ignore-dependencies --formula cairo || true
+
       - name: Build universal binary
         run: |
           set -euo pipefail
@@ -215,7 +232,7 @@ jobs:
           test -n "$X_OUT" && test -n "$A_OUT" || { echo "openbabel-sys build directories not found" >&2; exit 1; }
 
           # A universal app needs every Mach-O fat, not just the Rust binary:
-          # libopenbabel is linked and each .obf plugin is dlopen'd, so an app
+          # libopenbabel is linked and each .so plugin is dlopen'd, so an app
           # carrying only x86_64 copies of those would fail on Apple silicon.
           mkdir -p universal
           lipo -create -output "universal/$BIN" \
@@ -226,9 +243,9 @@ jobs:
           DYLIB=$(basename "$X_LIB")
           lipo -create -output "universal/$DYLIB" "$X_LIB" "$A_OUT/lib/$DYLIB"
 
-          X_PLUGINS=$(dirname "$(find "$X_OUT/lib/openbabel" -name '*.obf' | head -1)")
-          A_PLUGINS=$(dirname "$(find "$A_OUT/lib/openbabel" -name '*.obf' | head -1)")
-          for plugin in "$X_PLUGINS"/*.obf; do
+          X_PLUGINS=$(dirname "$(find "$X_OUT/lib/openbabel" -name '*.so' | head -1)")
+          A_PLUGINS=$(dirname "$(find "$A_OUT/lib/openbabel" -name '*.so' | head -1)")
+          for plugin in "$X_PLUGINS"/*.so; do
             name=$(basename "$plugin")
             lipo -create -output "universal/$name" "$plugin" "$A_PLUGINS/$name"
           done
@@ -254,7 +271,7 @@ jobs:
 
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           # The whole OpenBabel runtime goes beside the binary: that is where the
-          # app looks for BABEL_LIBDIR (the .obf plugins) and <exe_dir>/data.
+          # app looks for BABEL_LIBDIR (the .so plugins) and <exe_dir>/data.
           cp -R universal/. "$APP/Contents/MacOS/"
           chmod +x "$APP/Contents/MacOS/$BIN"
 
@@ -266,7 +283,7 @@ jobs:
           test -n "$OLD_REF" || { echo "binary does not reference libopenbabel" >&2; exit 1; }
           install_name_tool -change "$OLD_REF" "@rpath/$DYLIB" "$APP/Contents/MacOS/$BIN"
           install_name_tool -add_rpath "@executable_path" "$APP/Contents/MacOS/$BIN"
-          for plugin in "$APP/Contents/MacOS"/*.obf; do
+          for plugin in "$APP/Contents/MacOS"/*.so; do
             ref=$(otool -L "$plugin" | awk '/libopenbabel/ {print $1; exit}')
             [ -n "$ref" ] && install_name_tool -change "$ref" "@rpath/$DYLIB" "$plugin"
           done
@@ -274,7 +291,7 @@ jobs:
           # install_name_tool invalidates code signatures, and arm64 refuses to
           # run an unsigned Mach-O — an ad-hoc signature is enough to load.
           codesign --force --sign - "$APP/Contents/MacOS/$DYLIB"
-          for plugin in "$APP/Contents/MacOS"/*.obf; do codesign --force --sign - "$plugin"; done
+          for plugin in "$APP/Contents/MacOS"/*.so; do codesign --force --sign - "$plugin"; done
           codesign --force --sign - "$APP/Contents/MacOS/$BIN"
 
           cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
@@ -316,7 +333,8 @@ jobs:
     name: Publish release
     needs: [linux, windows, macos]
     runs-on: ubuntu-latest
-    # Only tags produce a release; workflow_dispatch runs stop after building.
+    # Only tags produce a release; pull_request / workflow_dispatch runs stop
+    # after building.
     if: github.ref_type == 'tag'
     permissions:
       contents: write # required to create the release and upload assets

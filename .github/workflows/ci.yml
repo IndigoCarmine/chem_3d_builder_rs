@@ -60,5 +60,36 @@ jobs:
             libxkbcommon-dev libwayland-dev libegl1-mesa-dev \
             libssl-dev
 
-      - run: cargo test --all-targets
+      - name: Compile tests
+        run: cargo test --all-targets --no-run
+
+      - name: Stage OpenBabel plugins next to the test binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # On Windows OpenBabel discovers its .obf format plugins in the
+          # directory of openbabel-3.dll (GetModuleFileName), not via an env
+          # var, so openbabel-sys's build script copies the DLL and the plugins
+          # next to the test binaries as a *side effect* of running. A warm
+          # Swatinem/rust-cache restores a prebuilt openbabel-sys without
+          # re-running that build script, so on a cache hit the plugins are
+          # never staged and every format load fails at runtime
+          # ("parse: Parse { format: \"smi\" }"). Re-stage them from the cached
+          # cmake install prefix, which rust-cache does preserve.
+          $bin = Get-ChildItem target\debug\build -Directory -Filter 'openbabel-sys-*' `
+                   -ErrorAction SilentlyContinue |
+                 ForEach-Object { Join-Path $_.FullName 'out\bin' } |
+                 Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $bin) { throw "openbabel-sys install prefix (out\bin) not found under target\debug\build" }
+          $runtime = Get-ChildItem "$bin\*" -Include *.dll, *.obf
+          if ($runtime.Count -eq 0) { throw "no .dll/.obf runtime found in $bin" }
+          foreach ($dir in 'target\debug', 'target\debug\deps') {
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            Copy-Item -Force $runtime $dir
+          }
+          Write-Host "Staged $($runtime.Count) runtime files into target\debug{,\deps}"
+
+      - name: Run tests
+        run: cargo test --all-targets
+
       - run: cargo build --release
