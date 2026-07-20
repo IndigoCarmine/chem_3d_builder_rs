@@ -10,8 +10,10 @@ license = "GPL-2.0-only"
 chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs" }
 # Pinned past v0.3.0: that tag resolves BABEL_DATADIR to the build machine's
 # absolute path, which leaves a packaged build with no force fields and no
-# gen3d. Move to a tag once one ships with the fix.
-openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", rev = "43c1726dfa529b3bd3de7050e1b95dafd4f8a7bf" }
+# gen3d. This rev keeps that fix and adds the optimizer's stop-reason API
+# (StopReason / stop_reason() / steps_taken()) that mm_session.rs relies on.
+# Move to a tag once one ships with both.
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", rev = "70526c865b45411ccfa917dcd87d9716acc554b8" }
 moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs" }
 eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "wgpu"] }
 egui = "0.35.0"
