@@ -1,9 +1,7 @@
 [package]
 name = "chem_3d_builder_rs"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
-# Linking OpenBabel (GPL-2.0-only) narrows what was already copyleft via
-# zunda_rs (GPL-2.0-or-later) to GPL-2.0-only.
 license = "GPL-2.0-only"
 
 [dependencies]
@@ -13,10 +11,25 @@ chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs" }
 # gen3d. This rev keeps that fix and adds the optimizer's stop-reason API
 # (StopReason / stop_reason() / steps_taken()) that mm_session.rs relies on.
 # Move to a tag once one ships with both.
-openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", rev = "70526c865b45411ccfa917dcd87d9716acc554b8" }
-moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs" }
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs",version="0.4.1" }
+# Pinned at 0.11.0: `viewport3d.rs` builds its own viewport out of this crate's
+# public parts, and 0.11.0 is the first rev where all of them are reachable --
+# `OffscreenRenderer::read_rgba` (3D PNG export), the `overlays` module
+# (selection highlights) and a `MoleculeViewer::pick` backed by a spatial grid.
+moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs", rev = "8f758cd372cd3f87fc72835df73143c62b272356" }
 eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "wgpu"] }
 egui = "0.35.0"
 egui-wgpu = "0.35.0"
 lin_alg = { version = "1.4.2", features = ["computer_graphics"] }
 rfd = "0.17"
+# Encodes the 3D viewport's RGBA readback. Already in the tree via egui's image
+# loaders, so this is a direct dependency on something already compiled.
+png = "0.18.1"
+# Runtime logging. eframe, egui and wgpu all report through `log`; without a
+# logger installed every one of those records is dropped on the floor, which
+# makes a packaged build impossible to diagnose from the outside. `env_logger`
+# is the smallest thing that turns them back on, and it also carries the app's
+# own failures (see `log_error_changes` in main.rs) to stderr.
+log = "0.4"
+env_logger = "0.11"
+

@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
+use crate::constraints::Constraint;
 use openbabel::{Algorithm, Minimizer, Molecule, OptStep, StopReason};
 
 use crate::forcefield_kind::FfKind;
@@ -65,6 +66,26 @@ pub struct Badge {
     pub unit: &'static str,
     pub steps: usize,
     pub outcome: Outcome,
+}
+
+impl Badge {
+    /// A badge for `energy`, or `None` if that is not a real number.
+    ///
+    /// This is the single place an energy becomes something the user sees, and
+    /// it is deliberately the only way to build one. OpenBabel hands back NaN
+    /// rather than an error when a force field cannot cope with a geometry —
+    /// two atoms nearly on top of each other, say — and the badge would then
+    /// read `E NaN` with nothing anywhere reporting a problem. Refusing to
+    /// render a number that is not one keeps that from being the whole of the
+    /// user's feedback.
+    fn new(energy: f64, unit: &'static str, steps: usize, outcome: Outcome) -> Option<Self> {
+        energy.is_finite().then_some(Self {
+            energy,
+            unit,
+            steps,
+            outcome,
+        })
+    }
 }
 
 /// What the worker sends back as it goes.
@@ -135,6 +156,7 @@ fn run_minimize(
     mut mol: Molecule,
     ff: FfKind,
     steps_per_frame: u32,
+    constraints: &[Constraint],
     cancel: &AtomicBool,
     mut on_chunk: impl FnMut(Vec<OptStep>),
 ) -> (Molecule, Outcome, bool) {
@@ -148,7 +170,10 @@ fn run_minimize(
 
         // A `Minimizer` owns a `Constraints`, which wraps a cxx opaque type and
         // is therefore `!Send` — it cannot be built by the caller and moved here.
+        // Rebuilt every segment along with the minimizer, which costs one pass
+        // over a handful of restraints and keeps them applying to each restart.
         let mut cfg = Minimizer::new(ff.ob_id());
+        cfg.constraints(crate::constraints::to_ob(constraints, mol.num_atoms()));
         cfg.algorithm(Algorithm::ConjugateGradients)
             // Never offer L-BFGS: paired with UFF it corrupts the heap in
             // OpenBabel 3.2.1.
@@ -193,15 +218,17 @@ fn keep_last(queue: &mut VecDeque<OptStep>) {
     }
 }
 
+/// The badge for a structure nobody has minimized yet — the energy as it
+/// stands, at step zero.
+fn starting_badge(mol: &Molecule, ff: FfKind) -> Option<Badge> {
+    let energy = mol.energy(ff.ob_id())?;
+    Badge::new(energy, ff.energy_unit(), 0, Outcome::Running)
+}
+
 impl MmState {
     /// A freshly generated 3D structure, with its starting energy read once.
     pub fn ready(mol: Molecule, ff: FfKind) -> Self {
-        let badge = mol.energy(ff.ob_id()).map(|energy| Badge {
-            energy,
-            unit: ff.energy_unit(),
-            steps: 0,
-            outcome: Outcome::Running,
-        });
+        let badge = starting_badge(&mol, ff);
         MmState::Idle { mol, badge }
     }
 
@@ -210,6 +237,24 @@ impl MmState {
         match self {
             MmState::Idle { mol, .. } => Some(mol),
             MmState::Empty | MmState::Running { .. } => None,
+        }
+    }
+
+    /// The molecule for in-place geometry edits. `None` in exactly the states
+    /// `mol()` is `None` in — a worker owns it, and with it OpenBabel's global
+    /// lock.
+    pub fn mol_mut(&mut self) -> Option<&mut Molecule> {
+        match self {
+            MmState::Idle { mol, .. } => Some(mol),
+            MmState::Empty | MmState::Running { .. } => None,
+        }
+    }
+
+    /// Re-read the energy after an edit changed the geometry. The step count
+    /// resets: the badge counts minimization steps, and a hand edit is not one.
+    pub fn refresh_badge(&mut self, ff: FfKind) {
+        if let MmState::Idle { mol, badge } = self {
+            *badge = starting_badge(mol, ff);
         }
     }
 
@@ -226,7 +271,17 @@ impl MmState {
     }
 
     /// Hand the molecule to a worker and start minimizing. A no-op unless idle.
-    pub fn start(&mut self, ff: FfKind, steps_per_frame: usize, ctx: &egui::Context) {
+    ///
+    /// `constraints` is plain data on purpose: `openbabel::Constraints` is a cxx
+    /// opaque type and `!Send`, so what crosses to the worker is the
+    /// description, and the worker builds OpenBabel's own set on its side.
+    pub fn start(
+        &mut self,
+        ff: FfKind,
+        steps_per_frame: usize,
+        constraints: Vec<Constraint>,
+        ctx: &egui::Context,
+    ) {
         let (mol, badge) = match std::mem::replace(self, MmState::Empty) {
             MmState::Idle { mol, badge } => (mol, badge),
             other => {
@@ -245,7 +300,7 @@ impl MmState {
             let chunk_tx = tx.clone();
             let chunk_ctx = worker_ctx.clone();
             let (mol, outcome, produced_any) =
-                run_minimize(mol, ff, spf, &worker_cancel, move |frames| {
+                run_minimize(mol, ff, spf, &constraints, &worker_cancel, move |frames| {
                     // Err only if the UI dropped the receiver, which is harmless.
                     let _ = chunk_tx.send(WorkerMsg::Chunk(frames));
                     // Wake the UI so it animates during the run, not after it.
@@ -367,12 +422,12 @@ impl MmState {
             };
             let run_steps = run_steps + delta as usize;
             let last_step = f.step;
-            let badge = Some(Badge {
-                energy: f.energy,
-                unit: ff.energy_unit(),
-                steps: base + run_steps,
-                outcome: Outcome::Running,
-            });
+            let badge = Badge::new(
+                f.energy,
+                ff.energy_unit(),
+                base + run_steps,
+                Outcome::Running,
+            );
             *self = MmState::Running {
                 rx,
                 cancel,
@@ -427,6 +482,19 @@ impl MmState {
 mod tests {
     use super::*;
 
+    /// OpenBabel answers a force field it cannot set up with NaN rather than an
+    /// error, and the badge is the only place an energy is shown — so a NaN
+    /// reaching it would be the whole of the user's feedback that anything went
+    /// wrong. `Badge::new` is the one constructor, so this is the one place the
+    /// guard has to hold.
+    #[test]
+    fn a_badge_never_carries_a_number_that_is_not_one() {
+        assert!(Badge::new(f64::NAN, "kJ/mol", 0, Outcome::Running).is_none());
+        assert!(Badge::new(f64::INFINITY, "kJ/mol", 0, Outcome::Running).is_none());
+        assert!(Badge::new(f64::NEG_INFINITY, "kJ/mol", 0, Outcome::Running).is_none());
+        assert!(Badge::new(-42.5, "kJ/mol", 3, Outcome::Converged).is_some());
+    }
+
     fn ethanol() -> Molecule {
         let mut mol = Molecule::parse("CCO", "smi").expect("parse");
         assert!(mol.generate_3d(), "gen3d");
@@ -438,12 +506,77 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut frames = Vec::new();
         let (_mol, outcome, produced) =
-            run_minimize(mol, ff, spf, &cancel, |chunk| frames.extend(chunk));
+            run_minimize(mol, ff, spf, &[], &cancel, |chunk| frames.extend(chunk));
         (frames, outcome, produced)
+    }
+
+    /// The restraints reach the force field through the worker's own entry
+    /// point, not just through `constraints::to_ob`.
+    ///
+    /// This is the wiring that fails silently: a minimization that drops its
+    /// constraints still runs, still converges, and still hands back a
+    /// perfectly good structure — just not the one that was asked for. So the
+    /// check is that the run ends somewhere the *unconstrained* run does not.
+    #[test]
+    fn constraints_reach_the_minimizer() {
+        let _ob = crate::test_support::ob_guard();
+
+        // Ethanol's C–C bond, stretched well past where UFF would leave it.
+        const TARGET: f64 = 2.2;
+        let cancel = AtomicBool::new(false);
+
+        let (free, _, _) = run_minimize(ethanol(), FfKind::Uff, 8, &[], &cancel, |_| {});
+        let free_cc = free.distance(0, 1);
+        assert!(
+            (free_cc - TARGET).abs() > 0.3,
+            "an unconstrained run must not land on the target by itself: {free_cc:.3} Å"
+        );
+
+        let restrained = [Constraint::Distance {
+            a: 0,
+            b: 1,
+            length: TARGET,
+        }];
+        let (held, _, _) = run_minimize(ethanol(), FfKind::Uff, 8, &restrained, &cancel, |_| {});
+        let held_cc = held.distance(0, 1);
+        assert!(
+            (held_cc - TARGET).abs() < 0.2,
+            "the restraint did not reach the minimizer: C–C is {held_cc:.3} Å,              wanted {TARGET} (unconstrained lands at {free_cc:.3})"
+        );
+    }
+
+    /// A restraint naming an atom the molecule does not have is dropped rather
+    /// than passed on — the panel cannot build one, but a structure regenerated
+    /// under an older, larger selection can leave one behind.
+    #[test]
+    fn a_stale_constraint_does_not_break_the_run() {
+        let _ob = crate::test_support::ob_guard();
+        let cancel = AtomicBool::new(false);
+        let stale = [Constraint::Distance {
+            a: 0,
+            b: 999,
+            length: 1.5,
+        }];
+        let mut frames = Vec::new();
+        let (mol, outcome, produced) =
+            run_minimize(ethanol(), FfKind::Uff, 8, &stale, &cancel, |c| {
+                frames.extend(c)
+            });
+        assert!(produced, "the run should still produce frames");
+        assert!(
+            matches!(outcome, Outcome::Converged | Outcome::StepLimit),
+            "unexpected outcome: {outcome:?}"
+        );
+        assert!(
+            mol.energy(FfKind::Uff.ob_id())
+                .is_some_and(|e| e.is_finite()),
+            "a dropped restraint must not leave a NaN energy"
+        );
     }
 
     #[test]
     fn uff_trajectory_does_not_raise_energy() {
+        let _ob = crate::test_support::ob_guard();
         let mol = ethanol();
         let e0 = mol.energy(FfKind::Uff.ob_id()).expect("initial energy");
         let (frames, _outcome, produced) = drive(mol, FfKind::Uff, 8);
@@ -465,6 +598,7 @@ mod tests {
     /// now cross segment boundaries and keep going until it genuinely converges.
     #[test]
     fn a_long_run_continues_past_the_first_segment() {
+        let _ob = crate::test_support::ob_guard();
         let mut mol = Molecule::parse("c1ccccc1C(=O)NC2CCCCC2", "smi").expect("parse");
         assert!(mol.generate_3d(), "gen3d");
 
@@ -473,7 +607,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut segments = 1usize;
         let mut last = 0u32;
-        let (_mol, outcome, _) = run_minimize(mol, FfKind::Uff, 8, &cancel, |chunk| {
+        let (_mol, outcome, _) = run_minimize(mol, FfKind::Uff, 8, &[], &cancel, |chunk| {
             for f in chunk {
                 if f.step <= last {
                     segments += 1;
@@ -494,10 +628,13 @@ mod tests {
     /// first segment stops the run before any work happens.
     #[test]
     fn cancel_before_the_first_segment_stops_immediately() {
+        let _ob = crate::test_support::ob_guard();
         let cancel = AtomicBool::new(true);
         let mut frames = Vec::new();
         let (_mol, outcome, produced) =
-            run_minimize(ethanol(), FfKind::Uff, 8, &cancel, |c| frames.extend(c));
+            run_minimize(ethanol(), FfKind::Uff, 8, &[], &cancel, |c| {
+                frames.extend(c)
+            });
         assert_eq!(outcome, Outcome::Cancelled);
         assert!(!produced && frames.is_empty(), "cancelled run did work");
     }
@@ -505,6 +642,7 @@ mod tests {
     /// Grounds the FfKind line-up: every id we offer must resolve in OpenBabel.
     #[test]
     fn every_forcefield_is_available() {
+        let _ob = crate::test_support::ob_guard();
         let mol = ethanol();
         for k in FfKind::ALL {
             assert!(mol.energy(k.ob_id()).is_some(), "{} unavailable", k.label());

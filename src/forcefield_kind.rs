@@ -55,6 +55,7 @@ mod tests {
 
     #[test]
     fn every_id_resolves_and_unit_matches_openbabel() {
+        let _ob = crate::test_support::ob_guard();
         for k in FfKind::ALL {
             assert_eq!(
                 openbabel::forcefield_energy_unit(k.ob_id()).as_deref(),
@@ -68,6 +69,7 @@ mod tests {
     /// OpenBabel 3.2.1 ships no runnable MM2, which is why `FfKind` dropped it.
     #[test]
     fn mm2_is_not_available() {
+        let _ob = crate::test_support::ob_guard();
         assert_eq!(openbabel::forcefield_energy_unit("MM2"), None);
     }
 }
