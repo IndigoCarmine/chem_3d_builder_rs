@@ -22,7 +22,7 @@ jobs:
     name: Linux (AppImage)
     runs-on: ubuntu-22.04 # oldest supported → widest glibc compatibility
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -80,10 +80,15 @@ jobs:
 
           # Unix plugins are versioned MODULE libraries, e.g.
           # lib/openbabel/3.2.1/*.so (the .obf name is Windows-only).
-          cp "$(dirname "$(find "$OB_OUT/lib/openbabel" -name '*.so' | head -1)")"/*.so \
-             "$APPDIR/usr/bin/"
-          cp -r "$(find "$OB_OUT/share/openbabel" -mindepth 1 -maxdepth 1 -type d | head -1)" \
-                "$APPDIR/usr/bin/data"
+          #
+          # `-print -quit` rather than `| head -1`: head exits after one line,
+          # find then dies on SIGPIPE, and under pipefail that is a failure.
+          PLUGIN=$(find "$OB_OUT/lib/openbabel" -name '*.so' -print -quit)
+          DATA=$(find "$OB_OUT/share/openbabel" -mindepth 1 -maxdepth 1 -type d -print -quit)
+          test -n "$PLUGIN" || { echo "no OpenBabel plugins under $OB_OUT/lib/openbabel" >&2; exit 1; }
+          test -n "$DATA" || { echo "no OpenBabel data under $OB_OUT/share/openbabel" >&2; exit 1; }
+          cp "$(dirname "$PLUGIN")"/*.so "$APPDIR/usr/bin/"
+          cp -r "$DATA" "$APPDIR/usr/bin/data"
 
           # Without these the AppImage still starts, and then has no force fields
           # and no 3D generation. Fail the release instead.
@@ -93,15 +98,15 @@ jobs:
           rsvg-convert -w 256 -h 256 assets/icon.svg \
              -o "$APPDIR/usr/share/icons/hicolor/256x256/apps/$BIN.png"
 
+          # No gtk plugin: nothing in the dependency graph links GTK (rfd uses the
+          # xdg desktop portal), and the plugin has no `continuous` release to
+          # download from — that URL 404s.
           curl -fsSL -o linuxdeploy \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          curl -fsSL -o linuxdeploy-plugin-gtk.sh \
-            https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk.sh
-          chmod +x linuxdeploy linuxdeploy-plugin-gtk.sh
-          export PATH="$PWD:$PATH" # so linuxdeploy finds the gtk plugin
+          chmod +x linuxdeploy
 
           export OUTPUT="chem_3d_builder-${VERSION}-x86_64.AppImage"
-          ./linuxdeploy --appdir "$APPDIR" --plugin gtk \
+          ./linuxdeploy --appdir "$APPDIR" \
             --desktop-file "$APPDIR/usr/share/applications/$BIN.desktop" \
             --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/$BIN.png" \
             --output appimage
@@ -109,7 +114,7 @@ jobs:
           mkdir -p dist
           mv "$OUTPUT" dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: dist/*
@@ -120,7 +125,7 @@ jobs:
     name: Windows (NSIS)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -180,7 +185,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Move-Item "chem_3d_builder-$version-setup.exe" dist\
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/*
@@ -191,7 +196,7 @@ jobs:
     name: macOS (dmg)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -322,7 +327,7 @@ jobs:
           mkdir -p dist
           mv "chem_3d_builder-${VERSION}.dmg" dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: dist/*
@@ -339,7 +344,7 @@ jobs:
     permissions:
       contents: write # required to create the release and upload assets
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -348,7 +353,7 @@ jobs:
         run: ls -lh artifacts
 
       - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           generate_release_notes: true
