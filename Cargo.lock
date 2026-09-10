@@ -3614,8 +3614,8 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openbabel"
-version = "0.4.1"
-source = "git+https://github.com/IndigoCarmine/openbabel_rs#d71248f8d01b7a35d009de60df6a3d5325ba79ce"
+version = "0.4.3"
+source = "git+https://github.com/IndigoCarmine/openbabel_rs?tag=v0.4.3#5c5d3263ec4141ae2f999b4bf24533b9c3bf2c0c"
 dependencies = [
  "cxx",
  "openbabel-sys",
@@ -3623,8 +3623,8 @@ dependencies = [
 
 [[package]]
 name = "openbabel-sys"
-version = "0.4.1"
-source = "git+https://github.com/IndigoCarmine/openbabel_rs#d71248f8d01b7a35d009de60df6a3d5325ba79ce"
+version = "0.4.3"
+source = "git+https://github.com/IndigoCarmine/openbabel_rs?tag=v0.4.3#5c5d3263ec4141ae2f999b4bf24533b9c3bf2c0c"
 dependencies = [
  "cmake",
  "cxx",

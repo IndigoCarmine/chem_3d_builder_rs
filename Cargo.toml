@@ -6,12 +6,10 @@ license = "GPL-2.0-only"
 
 [dependencies]
 chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs" }
-# Pinned past v0.3.0: that tag resolves BABEL_DATADIR to the build machine's
-# absolute path, which leaves a packaged build with no force fields and no
-# gen3d. This rev keeps that fix and adds the optimizer's stop-reason API
-# (StopReason / stop_reason() / steps_taken()) that mm_session.rs relies on.
-# Move to a tag once one ships with both.
-openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs",version="0.4.1" }
+# Pinned by tag: the tag is also what the workflows read out of Cargo.lock to
+# download the matching prebuilt OpenBabel from the openbabel_rs release, so
+# bump it only to a tag that has been released.
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.3" }
 # Pinned at 0.11.0: `viewport3d.rs` builds its own viewport out of this crate's
 # public parts, and 0.11.0 is the first rev where all of them are reachable --
 # `OffscreenRenderer::read_rgba` (3D PNG export), the `overlays` module

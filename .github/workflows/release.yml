@@ -40,6 +40,10 @@ jobs:
             desktop-file-utils patchelf
 
       - name: Build
+        # No prebuilt OpenBabel here, unlike CI and the Windows job: openbabel_rs
+        # builds its Linux archive on ubuntu-latest, and a library linked against
+        # that glibc may not load on this older image — nor on the older distros
+        # this AppImage exists to support. OpenBabel is compiled from source.
         run: cargo build --release
 
       - name: Package AppImage
@@ -106,6 +110,11 @@ jobs:
           chmod +x linuxdeploy
 
           export OUTPUT="chem_3d_builder-${VERSION}-x86_64.AppImage"
+          # A cargo-built binary carries no rpath to openbabel-sys's build
+          # directory (`cargo run` finds libopenbabel through LD_LIBRARY_PATH),
+          # so without this linuxdeploy stops at "Could not find dependency:
+          # libopenbabel.so.8". It rewrites the rpath to the bundled copy itself.
+          LD_LIBRARY_PATH="$OB_OUT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
           ./linuxdeploy --appdir "$APPDIR" \
             --desktop-file "$APPDIR/usr/share/applications/$BIN.desktop" \
             --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/$BIN.png" \
@@ -133,6 +142,32 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
+      - name: Fetch prebuilt OpenBabel
+        # openbabel_rs attaches OpenBabel, already built on windows-latest, to
+        # each tagged release; with OPENBABEL_SYS_PREBUILT_DIR pointing at it,
+        # openbabel-sys skips its 10-20 minute C++ build. The tag is read out of
+        # Cargo.lock so it cannot drift from what cargo builds; with no tag pin or
+        # no archive, the build falls back to compiling OpenBabel.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(grep -m1 -o 'openbabel_rs?tag=[^#]*' Cargo.lock | cut -d= -f2 || true)
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          archive="openbabel-sys-$triple.tar.gz"
+          if [ -z "$tag" ]; then
+            echo "::warning::openbabel_rs is not pinned to a tag; building OpenBabel from source"
+            exit 0
+          fi
+          cd "$RUNNER_TEMP"
+          if ! gh release download "$tag" -R IndigoCarmine/openbabel_rs -p "$archive" --clobber; then
+            echo "::warning::openbabel_rs $tag has no $archive; building OpenBabel from source"
+            exit 0
+          fi
+          mkdir -p openbabel-sys
+          tar -xzf "$archive" -C openbabel-sys
+          echo "OPENBABEL_SYS_PREBUILT_DIR=$RUNNER_TEMP/openbabel-sys" >> "$GITHUB_ENV"
+
       - name: Build
         run: cargo build --release
 
@@ -155,7 +190,10 @@ jobs:
             Where-Object { $_.reason -eq 'build-script-executed' -and $_.package_id -like '*openbabel-sys*' } |
             Select-Object -First 1 -ExpandProperty out_dir
           if (-not $outDir) { throw "could not find openbabel-sys's build output directory" }
-          Copy-Item -Recurse -Force "$outDir\bin\data" target\release\data
+          # A source build installs into out\, a prebuilt is copied to out\prebuilt\.
+          $bin = @("$outDir\prebuilt\bin", "$outDir\bin") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $bin) { throw "no OpenBabel install tree (bin\) under $outDir" }
+          Copy-Item -Recurse -Force "$bin\data" target\release\data
 
           # Missing any of this still produces an app that launches, and then has
           # no force fields and no 3D generation. Fail the release instead.
