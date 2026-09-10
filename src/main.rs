@@ -19,6 +19,7 @@ mod forcefield_kind;
 mod geom3d;
 mod ik;
 mod mm_session;
+mod structure_png;
 #[cfg(test)]
 mod test_support;
 mod theme;
@@ -72,9 +73,7 @@ const READ_FORMATS: &[(&str, &[&str])] = &[
 enum ImageKind {
     /// The 3D viewport exactly as it is on screen.
     View3d,
-    /// The 2D structure drawing, rasterised. Windows-only: chembuider-rs gates
-    /// its `molecule::image` renderer (resvg) behind `cfg(windows)`.
-    #[cfg(windows)]
+    /// The 2D structure drawing, rasterised (see `structure_png`).
     Structure2dPng,
     /// The structure as a vector drawing, from OpenBabel's depiction writer.
     Structure2dSvg,
@@ -82,7 +81,6 @@ enum ImageKind {
 
 const IMAGE_FORMATS: &[(ImageKind, &str, &str)] = &[
     (ImageKind::View3d, "3D ビュー (PNG)", "png"),
-    #[cfg(windows)]
     (ImageKind::Structure2dPng, "2D 構造式 (PNG)", "png"),
     (ImageKind::Structure2dSvg, "2D 構造式 (SVG)", "svg"),
 ];
@@ -390,9 +388,8 @@ impl App {
                 let (width, height, rgba) = self.viewport.read_rgba(render_state)?;
                 write_png(path, width, height, &rgba)
             }
-            #[cfg(windows)]
             ImageKind::Structure2dPng => {
-                let png = chembuider_rs::molecule::image::molecule_to_png(&self.editor.molecule)
+                let png = structure_png::molecule_to_png(&self.editor.molecule)
                     .ok_or("2D構造式を描画できませんでした。")?;
                 std::fs::write(path, png).map_err(|e| e.to_string())
             }

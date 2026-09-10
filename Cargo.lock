@@ -917,6 +917,7 @@ dependencies = [
  "moleucle_3dview_rs",
  "openbabel",
  "png 0.18.1",
+ "resvg 0.47.0",
  "rfd",
 ]
 
