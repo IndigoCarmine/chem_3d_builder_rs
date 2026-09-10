@@ -30,6 +30,11 @@ rfd = "0.17"
 # Encodes the 3D viewport's RGBA readback. Already in the tree via egui's image
 # loaders, so this is a direct dependency on something already compiled.
 png = "0.18.1"
+# Rasterises the 2D structure to PNG (see `structure_png.rs`). chembuider-rs has
+# the same renderer but gates it (and its own resvg) behind `cfg(windows)`, so we
+# pull resvg in directly to offer "2D 構造式 (PNG)" on every platform. Matches the
+# 0.47 upstream already builds against on Windows.
+resvg = "0.47.0"
 # Runtime logging. eframe, egui and wgpu all report through `log`; without a
 # logger installed every one of those records is dropped on the floor, which
 # makes a packaged build impossible to diagnose from the outside. `env_logger`
