@@ -115,6 +115,7 @@ CML と CIF は OpenBabel が libxml2 に対してビルドされていないた
 GUI は wgpu レンダラを使用（`eframe` の `wgpu` フィーチャ）。egui のバージョンは各サブ crate と合わせて 0.35.x。
 
 `openbabel_rs` は OpenBabel 3.2.1 を**ソースからビルドする**（vcpkg やシステムライブラリは使わない）ため、**CMake と C++ コンパイラが必須**。Windows では MSVC ツールチェインを使うこと。**初回ビルドは 10〜20 分**かかる（2 回目以降は増分）。
+CI（と Windows インストーラーのビルド）では、`openbabel_rs` のリリースに添付されたビルド済み OpenBabel を `OPENBABEL_SYS_PREBUILT_DIR` で使ってこのビルドを省略している。そのため `Cargo.toml` の `openbabel` は**リリース済みのタグ**で固定すること（詳細は openbabel_rs の [Prebuilt OpenBabel for CI](https://github.com/IndigoCarmine/openbabel_rs/blob/master/docs/src/building.md#prebuilt-openbabel)）。
 
 ```sh
 cargo run --release
